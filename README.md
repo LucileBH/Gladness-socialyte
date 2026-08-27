@@ -20,5 +20,69 @@ Calcium activity was recorded during sequential exposure to two conditions: an o
 -	Signal quality control: A 10-second tail suspension induced a strong increase in vCA1 calcium activity with similar amplitude across groups, supporting the quality and reliability of the calcium recordings.
 
 
+## **Fiber Photometry Analysis Pipeline**
+
+Signal was acquired using 410 nm and 470 nm fluorescence channels.
+
+The workflow includes signal preprocessing, photobleaching correction, movement artifact correction using the 410 nm control channel, peri-event z-score normalization, and quantification of stimulus-evoked responses.
+
+1. **Data loading and preprocessing**
+
+   - Loads the recording data.
+   - Converts timestamps from milliseconds to seconds.
+   - Removes the first 60 seconds of recording to exclude the initial fast photobleaching period.
+
+2. **Signal filtering**
+
+   - Applies a median filter to both 410 nm and 470 nm signals.
+   - Applies a zero-phase, 4th-order Butterworth low-pass filter.
+
+3. **Photobleaching correction**
+
+   - Fits a double-exponential decay to the filtered 410 nm and 470 nm signals.
+   - Removes the fitted decay from each signal to correct for photobleaching.
+
+4. **Movement artifact correction**
+
+   - Uses the corrected 410 nm control channel to predict movement-related fluctuations in the 470 nm signal through linear regression.
+   - Subtracts the predicted artifact from the 470 nm signal to obtain the movement-corrected signal.
+   - Correlations between the 410 nm and 470 nm signals are calculated before and after correction to assess the effect of the procedure.
+
+5. **Peri-event analysis**
+
+   - Extracts signal around predefined behavioral events.
+   - Normalizes each event using a baseline period from (−15 to −10 s) and converts the signal to a z-score.
+   
+6. **Response quantification**
+
+   - Calculates the mean z-scored response within predefined baseline and response windows.
+   - Calculates the area under the curve (AUC) for both baseline and response periods.
+   - Exports the resulting measurements to an Excel file.
+
+## Input
+
+The script expects a table containing :
+
+* **Column 1:** Time
+* **Column 3:** 410 nm control channel
+* **Column 4:** 470 nm signal channel
+
+
+## Output
+
+The script generates:
+
+* Quality-control plots comparing raw and filtered signals.
+* Double-exponential photobleaching fits.
+* Corrected and movement-corrected signals.
+* Correlation plots before and after movement correction.
+* Peri-event z-score plots.
+* An Excel file containing the aligned peri-event z-score data.
+* An Excel file containing mean response and AUC measurements.
+
+
+
+
+
 
 

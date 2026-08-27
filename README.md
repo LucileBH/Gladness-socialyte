@@ -1,4 +1,4 @@
-# Gladness-socialyte
+# Lakomy et al. 2026
 
 This code accompanies the analysis of in vivo calcium imaging experiments in **Lakomy et al (2026) : Acetylcholine drives astrocytic JAK2-STAT3 signaling to modulate male-to-female approach behavior.**
 

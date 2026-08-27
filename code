@@ -1,0 +1,385 @@
+clear
+close all
+
+% Specify the file name
+filename = 'filename';  
+
+T = readtable(filename);
+
+% Convert time to seconds and remove first minute
+T{:, 1} = T{:, 1} / 1000;  % Convert time column in seconds
+% Remove rows before 60 seconds (fast photoleaching)
+T = T(T{:, 1} >= 60, :);
+
+time=T{:, 1};
+raw_410=T{:, 3};
+raw_470=T{:, 4};
+
+
+%% Median filtering before the zero-phase low pass filtering 
+window_size = 5; % Adjust based on noise level
+filtered_470_med = medfilt1(raw_470, window_size);
+filtered_410_med = medfilt1(raw_410, window_size); 
+
+fs = 30; % Sampling frequency
+cutoff_frequency = 10; % Cutoff frequency in Hz 
+nyquist_frequency = fs / 2;
+normalized_cutoff = cutoff_frequency / nyquist_frequency;
+
+[b, a] = butter(4, normalized_cutoff, 'low'); % 4th-order Butterworth filter
+
+filtered_470 = filtfilt(b, a, filtered_470_med);
+filtered_410 = filtfilt(b, a, filtered_410_med);
+
+
+% Define the zoomed-in time window
+time_window = (time >= 100) & (time <= 160);
+time_zoomed = time(time_window);
+raw_470_zoomed = raw_470(time_window);
+filtered_470_zoomed = filtered_470(time_window);
+
+
+figure;
+% Top left: Raw 470 signal
+subplot(2, 2, 1);
+plot(time, raw_470, 'k-', 'LineWidth', 0.5);
+xlabel('Time (s)');
+ylabel('Fluorescence');
+title('Raw 470 Signal');
+grid on;
+% Bottom left: Filtered 470 signal
+subplot(2, 2, 3);
+plot(time, filtered_470, 'r-', 'LineWidth', 0.5);
+xlabel('Time (s)');
+ylabel('Fluorescence');
+title('Filtered 470 (5 Hz Low-Pass)');
+grid on;
+% Top right: Zoomed-in Raw 470 (100-160 s)
+subplot(2, 2, 2);
+plot(time_zoomed, raw_470_zoomed, 'k-', 'LineWidth', 0.5);
+xlabel('Time (s)');
+ylabel('Fluorescence');
+title('Raw 470 (Zoomed: 100-160 s)');
+grid on;
+% Bottom right: Zoomed-in Filtered 470 (100-160 s)
+subplot(2, 2, 4);
+plot(time_zoomed, filtered_470_zoomed, 'r-', 'LineWidth', 0.5);
+xlabel('Time (s)');
+ylabel('Fluorescence');
+title('Filtered 470 (Zoomed: 100-160 s)');
+grid on;
+
+%comparison of filtered vs unfiltered
+figure;
+plot(time_zoomed, raw_470_zoomed, 'b', 'DisplayName', 'Raw Signal');
+hold on;
+plot(time_zoomed, filtered_470_zoomed, 'r', 'DisplayName', 'Filtered Signal');
+legend;
+xlabel('Time (s)');
+ylabel('Signal Amplitude');
+title('Comparison of Raw and Filtered Signals');
+hold off;
+
+
+%% Curve fitting 410 & 470 12122024
+
+% Adding filtered_410 and filtered_470 to the table T
+T(:,5) = array2table(filtered_410);
+T(:,6) = array2table(filtered_470);
+T.Properties.VariableNames{5} = 'filtered_410';
+T.Properties.VariableNames{6} = 'filtered_470';
+
+% Define the double exponential decay function
+doubleExpFunc = @(params, t) params(1) * exp(-params(2) * t) + params(3) * exp(-params(4) * t);
+
+% Initial parameters for the fit [A1, k1, A2, k2]
+initialParams = [max(filtered_410), 0.01, max(filtered_410), 0.001];
+
+% Fit the raw_410 signal
+fit_410 = @(params) sum((doubleExpFunc(params, time) - filtered_410).^2);
+params_410 = fminsearch(fit_410, initialParams);
+
+% 470 Initial parameters for the fit [A1, k1, A2, k2]
+initialParams = [max(filtered_470), 0.01, max(filtered_470), 0.001];
+
+% Fit the raw_470 signal
+fit_470 = @(params) sum((doubleExpFunc(params, time) - filtered_470).^2);
+params_470 = fminsearch(fit_470, initialParams);
+
+% Generate fitted curves
+fitted_curve_410 = doubleExpFunc(params_410, time);
+fitted_curve_470 = doubleExpFunc(params_470, time);
+
+figure;
+% Plot for raw_410 signal
+subplot(2, 1, 1);
+plot(time, filtered_410, 'b', 'DisplayName', 'Original Signal (filtered\_410)');
+hold on;
+plot(time, fitted_curve_410, 'r', 'DisplayName', 'Fitted Curve (filtered\_410)');
+xlabel('Time');
+ylabel('Signal (raw\_410)');
+legend;
+title('Double Exponential Fit for raw\_410');
+% Plot for raw_470 signal
+subplot(2, 1, 2);
+plot(time, filtered_470, 'b', 'DisplayName', 'Original Signal (filtered\_470)');
+hold on;
+plot(time, fitted_curve_470, 'r', 'DisplayName', 'Fitted Curve (filtered\_470)');
+xlabel('Time');
+ylabel('Signal (filtered\_470)');
+legend;
+title('Double Exponential Fit for filtered\_470');
+
+
+
+%% %% REMOVING photobleaching from 410 and 470 
+
+corrected_410 = (filtered_410-fitted_curve_410);     
+corrected_470 = (filtered_470-fitted_curve_470); 
+
+figure;
+subplot(2, 1, 1); 
+plot(time, corrected_410, 'b-', 'LineWidth', 0.5); 
+xlabel('Time (s)');
+ylabel('Fluorescence');
+title('Corrected 410');
+grid on;
+subplot(2, 1, 2); 
+plot(time, corrected_470, 'r-', 'LineWidth', 0.5); 
+xlabel('Time (s)');
+ylabel('Fluorescence');
+title('Corrected 470');
+grid on;
+sgtitle('Comparison of Corrected Signals'); 
+
+%% % Linear regression to predict the signal channel from the control channel
+X = [corrected_410, ones(size(corrected_410))]; 
+coeffs = X \ corrected_470; 
+
+% Extract coefficients
+slope = coeffs(1);  
+intercept = coeffs(2);  
+
+% Predict the movement artifact in the signal channel
+predicted_movement_artifact = slope * corrected_410 + intercept;
+
+%% Movement correction
+
+% Removing the predicted movement artifact
+movement_corrected_470 = corrected_470 - predicted_movement_artifact;
+
+% Original signal and control channel
+subplot(3, 1, 1);
+plot(time, corrected_470, 'b-', 'LineWidth', 0.5); hold on;
+plot(time, corrected_410, 'r-', 'LineWidth', 0.5);
+legend('Signal (470 nm)', 'Control (410 nm)');
+title('Original Signals');
+xlabel('Time (s)');
+ylabel('Fluorescence');
+grid on;
+% Predicted movement artifact
+subplot(3, 1, 2);
+plot(time, predicted_movement_artifact, 'k-', 'LineWidth', 0.5);
+title('Predicted Movement Artifact');
+xlabel('Time (s)');
+ylabel('Fluorescence');
+grid on;
+% Movement-corrected signal 
+subplot(3, 1, 3);
+plot(time, movement_corrected_470, 'Color', [0 0.5 0], 'LineWidth', 0.5);
+title('Movement-Corrected 470');
+xlabel('Time (s)');
+ylabel('Fluorescence');
+grid on;
+
+%% Check the effect of the movement correction 
+
+% Calculate correlations
+corr_before = corr(corrected_470, corrected_410);  
+corr_after = corr(movement_corrected_470, corrected_410); 
+
+% Correlation before correction
+subplot(2, 1, 1);
+scatter(corrected_410, corrected_470, 5, 'b', 'filled'); 
+xlabel('Control Channel (410 nm)');
+ylabel('Signal Channel (470 nm)');
+title(['Correlation Before Correction: r = ', num2str(corr_before, '%.2f')]);
+grid on;
+% Correlation after correction
+subplot(2, 1, 2);
+scatter(corrected_410, movement_corrected_470, 5, 'MarkerFaceColor', [0 0.5 0], 'MarkerEdgeColor', [0 0.3 0]); 
+xlabel('Control Channel (410 nm)');
+ylabel('Corrected Signal (470 nm)');
+title(['Correlation After Correction: r = ', num2str(corr_after, '%.2f')]);
+grid on;
+% Display the correlation values
+disp(['Correlation Before Correction: ', num2str(corr_before)]);
+disp(['Correlation After Correction: ', num2str(corr_after)]);
+
+%% %%% DF/F and zscore calculation 
+
+%To add the movement corrected 470 to the "T" table
+T.movement_corrected_470 = movement_corrected_470;
+
+
+%% zscore 
+
+time = T{:,1};   
+F    = T{:,7};   
+
+timestamps = [268, 895, 1083];
+event_labels = {'Object1st', 'Female1st', 'TST'};
+
+% --- Common peri-event axis ---
+dt = median(diff(time));
+t_window = (-20:dt:20)';
+nT = length(timestamps);
+
+F_matrix = nan(length(t_window), nT);
+
+
+%  PERI-EVENT EXTRACTION
+for i = 1:nT
+    
+    t0 = timestamps(i);
+    
+    % --- Baseline window ---
+    baseline_idx = time >= (t0 - 15) & time <= (t0 - 10);
+    
+    if ~any(baseline_idx)
+        warning('No baseline for %s', event_labels{i});
+        continue;
+    end
+    
+    % --- ROBUST BASELINE NORMALISATION ---
+    F0 = median(F(baseline_idx), 'omitnan');
+    sigma = std(F(baseline_idx), 'omitnan');
+    
+    if sigma == 0 || isnan(sigma)
+        warning('Invalid sigma for %s', event_labels{i});
+        continue;
+    end
+    
+    % --- Event window ---
+    event_idx = time >= (t0 - 20) & time <= (t0 + 20);
+    
+    t_local = time(event_idx) - t0;
+    F_local = F(event_idx);
+    
+    % --- Z-score baseline normalisation ---
+    F_norm = (F_local - F0) / sigma;
+    
+    % --- interpolation onto common axis ---
+    F_interp = interp1(t_local, F_norm, t_window, 'linear', NaN);
+    
+    F_matrix(:, i) = F_interp;
+end
+
+
+%  TABLE EXPORT
+
+zscore_aligned = array2table(F_matrix, 'VariableNames', event_labels);
+
+zscore_aligned = addvars(zscore_aligned, t_window, ...
+    'Before', 1, 'NewVariableNames', 'Time');
+
+outFile = [filename '_zscore_around_events.xlsx'];
+writetable(zscore_aligned, outFile);
+
+
+%  PLOTS
+
+time = zscore_aligned{:,1};
+data = zscore_aligned{:,2:end};
+labels = zscore_aligned.Properties.VariableNames(2:end);
+
+object_idx = contains(labels, 'Object');
+female_idx = contains(labels, 'Female') | contains(labels, 'TST');
+
+% --- OBJECT ---
+figure;
+plot(time, data(:, object_idx), 'LineWidth', 1.5);
+xlabel('Time (s)');
+ylabel('Z-score (baseline)');
+title('Object Events');
+legend(labels(object_idx), 'Location', 'best');
+xline(0, '--k');
+grid on;
+
+% --- FEMALE + TST ---
+figure;
+plot(time, data(:, female_idx), 'LineWidth', 1.5);
+xlabel('Time (s)');
+ylabel('Z-score (baseline)');
+title('Female + TST Events');
+legend(labels(female_idx), 'Location', 'best');
+xline(0, '--k');
+grid on;
+
+
+
+
+%% AUC calculation
+
+
+%  QUANTIFICATION (MEAN + AUC)
+
+
+time = zscore_aligned.Time;
+data = zscore_aligned{:,2:end};
+labels = zscore_aligned.Properties.VariableNames(2:end);
+
+% Define your windows
+windows = {
+    [-11 -5], [0 6];
+    [-13 -5], [0 8];
+    [-15 -5], [0 10];
+    [-11 -5], [3 7];
+    [-10 -5], [0 5];
+};
+
+numStim = size(data,2);
+numWin  = size(windows,1);
+
+% Preallocate results
+results = [];
+
+for w = 1:numWin
+    
+    baseline_window = windows{w,1};
+    response_window = windows{w,2};
+    
+    for s = 1:numStim
+        
+        signal = data(:,s);
+        
+        % --- indices ---
+        idx_base = time >= baseline_window(1) & time <= baseline_window(2);
+        idx_resp = time >= response_window(1) & time <= response_window(2);
+        
+        % --- Mean response ---
+        mean_resp = mean(signal(idx_resp), 'omitnan');
+        
+        % --- AUC ---
+        auc_base = trapz(time(idx_base), signal(idx_base));
+        auc_resp = trapz(time(idx_resp), signal(idx_resp));
+        
+        % --- Store ---
+        results = [results; 
+            {labels{s}, ...
+             baseline_window(1), baseline_window(2), ...
+             response_window(1), response_window(2), ...
+             mean_resp, auc_base, auc_resp}];
+    end
+end
+
+% Convert to table
+results_table = cell2table(results, 'VariableNames', ...
+    {'Stimulus','BaselineStart','BaselineEnd','ResponseStart','ResponseEnd',...
+     'MeanResponse','AUC_Baseline','AUC_Response'});
+
+writetable(results_table, [filename '_AUC.xlsx']);
+
+
+
+
